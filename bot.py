@@ -4,20 +4,18 @@ import logging
 from datetime import datetime
 import pytz
 import requests
-from dotenv import load_dotenv
 from telegram import Bot, Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-# Load environment variables from .env
-load_dotenv()
-
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-TELEGRAM_TOKEN = os.environ.get("8716627952:AAEJbaMTA7oi8OC6CXxduZK5IAbXbAMTRAw")
-TWELVEDATA_API_KEY = os.environ.get("8b6776bf8717425da1a199f096baf6ec")
-CHAT_ID = os.environ.get("6083157713")
+# ── PASTE YOUR CREDENTIALS DIRECTLY HERE ──────────────────────────────────────
+TELEGRAM_TOKEN = "8716627952:AAEJbaMTA7oi8OC6CXxduZK5IAbXbAMTRAw"
+TWELVEDATA_API_KEY = "8b6776bf8717425da1a199f096baf6ec"
+CHAT_ID = "6083157713"
+# ──────────────────────────────────────────────────────────────────────────────
 
 PAIRS = ["EUR/USD", "GBP/USD", "XAU/USD"]
 TIMEZONE = pytz.timezone("Africa/Accra")
@@ -29,10 +27,9 @@ PAIR_EMOJI = {
 }
 
 
-# ── Data fetching ─────────────────────────────────────────────────────────────
+# ── Data fetching ──────────────────────────────────────────────────────────────
 
-def fetch_candles(symbol: str, interval: str = "1h", outputsize: int = 60) -> list[dict] | None:
-    """Fetch OHLCV candles from Twelve Data."""
+def fetch_candles(symbol, interval="1h", outputsize=60):
     url = "https://api.twelvedata.com/time_series"
     params = {
         "symbol": symbol,
@@ -53,20 +50,9 @@ def fetch_candles(symbol: str, interval: str = "1h", outputsize: int = 60) -> li
         return None
 
 
-def fetch_price(symbol: str) -> float | None:
-    """Fetch latest price."""
-    url = "https://api.twelvedata.com/price"
-    try:
-        resp = requests.get(url, params={"symbol": symbol, "apikey": TWELVEDATA_API_KEY}, timeout=10)
-        data = resp.json()
-        return float(data.get("price", 0)) or None
-    except Exception:
-        return None
+# ── Indicators ─────────────────────────────────────────────────────────────────
 
-
-# ── Indicator calculations ─────────────────────────────────────────────────────
-
-def calc_rsi(closes: list[float], period: int = 14) -> float:
+def calc_rsi(closes, period=14):
     if len(closes) < period + 1:
         return 50.0
     gains, losses = [], []
@@ -82,7 +68,7 @@ def calc_rsi(closes: list[float], period: int = 14) -> float:
     return round(100 - 100 / (1 + rs), 2)
 
 
-def calc_ema(closes: list[float], period: int) -> float:
+def calc_ema(closes, period):
     if len(closes) < period:
         return closes[-1]
     k = 2 / (period + 1)
@@ -92,7 +78,7 @@ def calc_ema(closes: list[float], period: int) -> float:
     return ema
 
 
-def calc_macd(closes: list[float]) -> dict:
+def calc_macd(closes):
     ema12 = calc_ema(closes, 12)
     ema26 = calc_ema(closes, 26)
     macd_line = ema12 - ema26
@@ -101,13 +87,12 @@ def calc_macd(closes: list[float]) -> dict:
     return {"macd": macd_line, "signal": signal_line, "hist": histogram}
 
 
-def calc_ma(closes: list[float], period: int) -> float:
+def calc_ma(closes, period):
     subset = closes[-period:]
     return sum(subset) / len(subset)
 
 
-def get_signal_score(rsi: float, macd_hist: float, price: float, ma50: float) -> int:
-    """Score from -3 to +3. Positive = bullish, negative = bearish."""
+def get_signal_score(rsi, macd_hist, price, ma50):
     score = 0
     if rsi < 30:
         score += 2
@@ -122,8 +107,7 @@ def get_signal_score(rsi: float, macd_hist: float, price: float, ma50: float) ->
     return score
 
 
-def interpret_signal(score: int) -> tuple[str, str]:
-    """Return (direction, strength)."""
+def interpret_signal(score):
     if score >= 3:
         return "BUY", "strong"
     elif score == 2:
@@ -136,19 +120,17 @@ def interpret_signal(score: int) -> tuple[str, str]:
         return "NEUTRAL", "weak"
 
 
-# ── Message formatting ─────────────────────────────────────────────────────────
+# ── Formatting ─────────────────────────────────────────────────────────────────
 
-def format_signal_message(symbol: str, price: float, rsi: float, macd_hist: float, ma50: float, score: int) -> str:
+def format_signal_message(symbol, price, rsi, macd_hist, ma50, score):
     direction, strength = interpret_signal(score)
     emoji = PAIR_EMOJI.get(symbol, "📊")
-
     if direction == "BUY":
         signal_line = f"🟢 *{strength.upper()} BUY SIGNAL*"
     elif direction == "SELL":
         signal_line = f"🔴 *{strength.upper()} SELL SIGNAL*"
     else:
-        return ""  # Don't send neutral signals as alerts
-
+        return ""
     reasons = []
     if rsi < 30:
         reasons.append(f"RSI {rsi} — deeply oversold")
@@ -158,75 +140,58 @@ def format_signal_message(symbol: str, price: float, rsi: float, macd_hist: floa
         reasons.append(f"RSI {rsi} — overbought, expect pullback")
     elif rsi > 55:
         reasons.append(f"RSI {rsi} — overbought pressure")
-
     reasons.append("MACD momentum is " + ("bullish ↑" if macd_hist > 0 else "bearish ↓"))
-    reasons.append("Price is " + ("above" if price > ma50 else "below") + f" MA50 ({ma50:.4f})")
-
+    reasons.append("Price is " + ("above" if price > ma50 else "below") + f" MA50")
     reason_text = "\n".join(f"  • {r}" for r in reasons)
-
     dp = 2 if "XAU" in symbol else 4
-    price_str = f"{price:.{dp}f}"
-
     now = datetime.now(TIMEZONE).strftime("%H:%M WAT")
-
     return (
         f"{emoji} *{symbol}* — {signal_line}\n"
-        f"Price: `{price_str}`\n\n"
+        f"Price: `{price:.{dp}f}`\n\n"
         f"Why:\n{reason_text}\n\n"
-        f"⚠️ _Study this signal, not financial advice._\n"
+        f"⚠️ _Study this signal — not financial advice._\n"
         f"🕐 _{now}_"
     )
 
 
-def format_briefing_message(results: list[dict]) -> str:
+def format_briefing(results):
     now = datetime.now(TIMEZONE).strftime("%A, %d %b %Y · %H:%M WAT")
     lines = [f"📋 *Daily Forex Briefing*\n_{now}_\n"]
-
     for r in results:
         sym = r["symbol"]
         emoji = PAIR_EMOJI.get(sym, "📊")
         direction, strength = interpret_signal(r["score"])
         dp = 2 if "XAU" in sym else 4
-
         if direction == "BUY":
             mood = f"🟢 Leaning BUY ({strength})"
         elif direction == "SELL":
             mood = f"🔴 Leaning SELL ({strength})"
         else:
             mood = "⚪ Neutral — wait"
-
-        lines.append(
-            f"{emoji} *{sym}*\n"
-            f"  Price: `{r['price']:.{dp}f}` | RSI: `{r['rsi']}`\n"
-            f"  {mood}\n"
-        )
-
-    lines.append("_Use /signal <pair> for full breakdown_")
+        lines.append(f"{emoji} *{sym}*\n  Price: `{r['price']:.{dp}f}` | RSI: `{r['rsi']}`\n  {mood}\n")
+    lines.append("_Use /signal to check any pair now_")
     return "\n".join(lines)
 
 
-def format_eod_message(results: list[dict]) -> str:
+def format_eod(results):
     now = datetime.now(TIMEZONE).strftime("%A, %d %b %Y")
     lines = [f"🌙 *End of Day Recap — {now}*\n"]
-
     buys = [r for r in results if interpret_signal(r["score"])[0] == "BUY"]
     sells = [r for r in results if interpret_signal(r["score"])[0] == "SELL"]
     neutrals = [r for r in results if interpret_signal(r["score"])[0] == "NEUTRAL"]
-
     if buys:
-        lines.append("🟢 *Bullish today:* " + ", ".join(r["symbol"] for r in buys))
+        lines.append("🟢 *Bullish:* " + ", ".join(r["symbol"] for r in buys))
     if sells:
-        lines.append("🔴 *Bearish today:* " + ", ".join(r["symbol"] for r in sells))
+        lines.append("🔴 *Bearish:* " + ", ".join(r["symbol"] for r in sells))
     if neutrals:
-        lines.append("⚪ *No clear signal:* " + ", ".join(r["symbol"] for r in neutrals))
-
-    lines.append("\n_Open your Exness demo and review these against what the market actually did. That's how you learn._ 📚")
+        lines.append("⚪ *Neutral:* " + ", ".join(r["symbol"] for r in neutrals))
+    lines.append("\n_Compare these against your Exness demo trades today. That's how you learn._ 📚")
     return "\n".join(lines)
 
 
-# ── Core analysis ──────────────────────────────────────────────────────────────
+# ── Analysis ───────────────────────────────────────────────────────────────────
 
-def analyse_pair(symbol: str) -> dict | None:
+def analyse_pair(symbol):
     candles = fetch_candles(symbol)
     if not candles or len(candles) < 30:
         return None
@@ -236,95 +201,56 @@ def analyse_pair(symbol: str) -> dict | None:
     macd = calc_macd(closes)
     ma50 = calc_ma(closes, min(50, len(closes)))
     score = get_signal_score(rsi, macd["hist"], price, ma50)
-    return {
-        "symbol": symbol,
-        "price": price,
-        "rsi": rsi,
-        "macd_hist": macd["hist"],
-        "ma50": ma50,
-        "score": score,
-    }
+    return {"symbol": symbol, "price": price, "rsi": rsi, "macd_hist": macd["hist"], "ma50": ma50, "score": score}
 
 
 # ── Scheduled jobs ─────────────────────────────────────────────────────────────
 
-async def send_morning_briefing(bot: Bot):
-    logger.info("Sending morning briefing...")
-    results = []
-    for pair in PAIRS:
-        r = analyse_pair(pair)
-        if r:
-            results.append(r)
+async def send_morning_briefing(bot):
+    results = [r for r in (analyse_pair(p) for p in PAIRS) if r]
     if results:
-        msg = format_briefing_message(results)
-        await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+        await bot.send_message(chat_id=CHAT_ID, text=format_briefing(results), parse_mode="Markdown")
 
 
-async def send_eod_recap(bot: Bot):
-    logger.info("Sending EOD recap...")
-    results = []
-    for pair in PAIRS:
-        r = analyse_pair(pair)
-        if r:
-            results.append(r)
+async def send_eod_recap(bot):
+    results = [r for r in (analyse_pair(p) for p in PAIRS) if r]
     if results:
-        msg = format_eod_message(results)
-        await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+        await bot.send_message(chat_id=CHAT_ID, text=format_eod(results), parse_mode="Markdown")
 
 
-async def check_alerts(bot: Bot):
-    logger.info("Checking for strong signals...")
+async def check_alerts(bot):
     for pair in PAIRS:
         r = analyse_pair(pair)
         if not r:
             continue
         direction, strength = interpret_signal(r["score"])
         if strength == "strong" and direction != "NEUTRAL":
-            msg = format_signal_message(
-                r["symbol"], r["price"], r["rsi"],
-                r["macd_hist"], r["ma50"], r["score"]
-            )
+            msg = format_signal_message(r["symbol"], r["price"], r["rsi"], r["macd_hist"], r["ma50"], r["score"])
             if msg:
                 await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
-                logger.info(f"Alert sent for {pair}: {direction}")
 
 
-# ── Telegram command handlers ──────────────────────────────────────────────────
+# ── Commands ───────────────────────────────────────────────────────────────────
 
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_start(update, context):
     name = update.effective_user.first_name or "trader"
     await update.message.reply_text(
-        f"👋 Hey {name}! I'm your Forex Signal Guide.\n\n"
-        f"I watch *{', '.join(PAIRS)}* and alert you when signals look strong.\n\n"
+        f"👋 Hey {name}! I'm *D!sForex* — your personal forex signal guide.\n\n"
+        f"I watch *EUR/USD, GBP/USD, XAU/USD* and alert you when signals look strong.\n\n"
         f"Commands:\n"
         f"  /signal — check all pairs now\n"
-        f"  /signal EURUSD — check one pair\n"
-        f"  /briefing — get today's briefing\n"
-        f"  /help — show this message",
+        f"  /briefing — today's market briefing\n"
+        f"  /help — how I work",
         parse_mode="Markdown"
     )
 
 
-async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    args = context.args
-    pairs_to_check = PAIRS
-
-    if args:
-        raw = args[0].upper().replace("USD", "/USD").replace("EUR", "EUR/").replace("GBP", "GBP/").replace("XAU", "XAU/")
-        # simple normalisation
-        lookup = {p.replace("/", ""): p for p in PAIRS}
-        clean = args[0].upper().replace("/", "")
-        if clean in lookup:
-            pairs_to_check = [lookup[clean]]
-        else:
-            await update.message.reply_text(f"Unknown pair. Available: {', '.join(PAIRS)}")
-            return
-
+async def cmd_signal(update, context):
     await update.message.reply_text("🔍 Fetching live signals...")
-    for pair in pairs_to_check:
+    for pair in PAIRS:
         r = analyse_pair(pair)
         if not r:
-            await update.message.reply_text(f"❌ Could not fetch data for {pair}. Try again shortly.")
+            await update.message.reply_text(f"❌ Could not fetch {pair} right now.")
             continue
         direction, strength = interpret_signal(r["score"])
         if direction == "NEUTRAL":
@@ -333,7 +259,7 @@ async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 f"{emoji} *{pair}* — ⚪ No clear signal\n"
                 f"Price: `{r['price']:.{dp}f}` | RSI: `{r['rsi']}`\n"
-                f"_Indicators are mixed. Wait for confluence._",
+                f"_Mixed signals — wait for confluence._",
                 parse_mode="Markdown"
             )
         else:
@@ -341,28 +267,24 @@ async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(msg, parse_mode="Markdown")
 
 
-async def cmd_briefing(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_briefing(update, context):
     await update.message.reply_text("📊 Pulling market data...")
-    results = []
-    for pair in PAIRS:
-        r = analyse_pair(pair)
-        if r:
-            results.append(r)
+    results = [r for r in (analyse_pair(p) for p in PAIRS) if r]
     if results:
-        await update.message.reply_text(format_briefing_message(results), parse_mode="Markdown")
+        await update.message.reply_text(format_briefing(results), parse_mode="Markdown")
     else:
-        await update.message.reply_text("❌ Could not fetch data right now. Try again in a moment.")
+        await update.message.reply_text("❌ Could not fetch data right now. Try again shortly.")
 
 
-async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_help(update, context):
     await update.message.reply_text(
-        "📚 *How I work*\n\n"
-        "I use 3 indicators to study the market:\n"
-        "  • *RSI* — Is a currency overbought or oversold?\n"
+        "📚 *How D!sForex works*\n\n"
+        "I use 3 indicators:\n"
+        "  • *RSI* — Is price overbought or oversold?\n"
         "  • *MACD* — Is momentum going up or down?\n"
-        "  • *MA50* — What's the overall trend?\n\n"
+        "  • *MA50* — What is the overall trend?\n\n"
         "A *strong signal* fires only when all 3 agree.\n\n"
-        "⚠️ _I guide you to study signals — I don't trade for you, and this is not financial advice._",
+        "⚠️ _I guide your study — I do not trade for you._",
         parse_mode="Markdown"
     )
 
@@ -379,15 +301,12 @@ def main():
     app.add_handler(CommandHandler("help", cmd_help))
 
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
-    # Morning briefing — 7am WAT
     scheduler.add_job(send_morning_briefing, "cron", hour=7, minute=0, args=[bot])
-    # EOD recap — 9pm WAT
     scheduler.add_job(send_eod_recap, "cron", hour=21, minute=0, args=[bot])
-    # Alert checks — every 2 hours during market hours
     scheduler.add_job(check_alerts, "cron", hour="7-22", minute=0, args=[bot])
     scheduler.start()
 
-    logger.info("Bot is running...")
+    logger.info("D!sForex bot is running...")
     app.run_polling(drop_pending_updates=True)
 
 
