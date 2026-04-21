@@ -24,6 +24,19 @@ PAIR_EMOJI = {
     "XAU/USD": "🥇",
 }
 
+PAIR_LABEL = {
+    "EUR/USD": "Euro",
+    "GBP/USD": "British Pound",
+    "XAU/USD": "Gold",
+}
+
+# Stop loss pip/point distance per pair
+STOP_LOSS_DISTANCE = {
+    "EUR/USD": 0.0015,
+    "GBP/USD": 0.0020,
+    "XAU/USD": 8.0,
+}
+
 
 # ── Data fetching ──────────────────────────────────────────────────────────────
 
@@ -42,7 +55,14 @@ def fetch_candles(symbol, interval="1h", outputsize=60):
             logger.error(f"API error for {symbol}: {data.get('message')}")
             return None
         values = data.get("values", [])
-        return [{"close": float(v["close"]), "high": float(v["high"]), "low": float(v["low"])} for v in reversed(values)]
+        return [
+            {
+                "close": float(v["close"]),
+                "high": float(v["high"]),
+                "low": float(v["low"]),
+            }
+            for v in reversed(values)
+        ]
     except Exception as e:
         logger.error(f"Failed to fetch {symbol}: {e}")
         return None
@@ -92,15 +112,22 @@ def calc_ma(closes, period):
 
 def get_signal_score(rsi, macd_hist, price, ma50):
     score = 0
-    if rsi < 30:
+    # RSI — weighted more heavily
+    if rsi < 25:
+        score += 3
+    elif rsi < 35:
         score += 2
     elif rsi < 45:
         score += 1
-    elif rsi > 70:
+    elif rsi > 75:
+        score -= 3
+    elif rsi > 65:
         score -= 2
     elif rsi > 55:
         score -= 1
+    # MACD momentum
     score += 1 if macd_hist > 0 else -1
+    # Trend
     score += 1 if price > ma50 else -1
     return score
 
@@ -108,82 +135,151 @@ def get_signal_score(rsi, macd_hist, price, ma50):
 def interpret_signal(score):
     if score >= 3:
         return "BUY", "strong"
-    elif score == 2:
+    elif score >= 1:
         return "BUY", "moderate"
     elif score <= -3:
         return "SELL", "strong"
-    elif score == -2:
+    elif score <= -1:
         return "SELL", "moderate"
     else:
-        return "NEUTRAL", "weak"
+        return "WAIT", "neutral"
 
 
-# ── Formatting ─────────────────────────────────────────────────────────────────
+# ── Plain English reasons ──────────────────────────────────────────────────────
 
-def format_signal_message(symbol, price, rsi, macd_hist, ma50, score):
+def plain_english_reason(symbol, direction, rsi, macd_hist, price, ma50):
+    label = PAIR_LABEL.get(symbol, symbol)
+
+    if direction == "BUY":
+        if rsi < 25:
+            return f"{label} has dropped a lot and looks very cheap right now — a bounce up is likely."
+        elif rsi < 35:
+            return f"{label} has been oversold and is showing early signs of recovery."
+        elif macd_hist > 0 and price > ma50:
+            return f"{label} momentum is picking up and the overall trend is upward."
+        else:
+            return f"More signals are pointing up than down for {label} right now."
+
+    elif direction == "SELL":
+        if rsi > 75:
+            return f"{label} has risen too fast and looks expensive — a drop is likely."
+        elif rsi > 65:
+            return f"{label} is overbought and momentum is starting to turn downward."
+        elif macd_hist < 0 and price < ma50:
+            return f"{label} momentum is weakening and the overall trend is downward."
+        else:
+            return f"More signals are pointing down than up for {label} right now."
+
+    else:
+        if rsi < 40:
+            return f"{label} looks cheap but momentum hasn't confirmed a bounce yet. Watch and wait."
+        elif rsi > 60:
+            return f"{label} looks expensive but hasn't started dropping yet. Watch and wait."
+        else:
+            return f"No strong direction for {label} right now. Sit this one out."
+
+
+# ── Stop loss calculation ──────────────────────────────────────────────────────
+
+def calc_stop_loss(symbol, direction, price):
+    distance = STOP_LOSS_DISTANCE.get(symbol, 0.002)
+    dp = 2 if "XAU" in symbol else 4
+    if direction == "BUY":
+        sl = price - distance
+        tp = price + (distance * 2)
+        return f"Stop loss: `{sl:.{dp}f}` | Take profit: `{tp:.{dp}f}`"
+    elif direction == "SELL":
+        sl = price + distance
+        tp = price - (distance * 2)
+        return f"Stop loss: `{sl:.{dp}f}` | Take profit: `{tp:.{dp}f}`"
+    return ""
+
+
+# ── Message formatting ─────────────────────────────────────────────────────────
+
+def format_signal_message(symbol, price, rsi, macd_hist, ma50, score, alert=False):
     direction, strength = interpret_signal(score)
     emoji = PAIR_EMOJI.get(symbol, "📊")
-    if direction == "BUY":
-        signal_line = f"🟢 *{strength.upper()} BUY SIGNAL*"
-    elif direction == "SELL":
-        signal_line = f"🔴 *{strength.upper()} SELL SIGNAL*"
-    else:
-        return ""
-    reasons = []
-    if rsi < 30:
-        reasons.append(f"RSI {rsi} — deeply oversold")
-    elif rsi < 45:
-        reasons.append(f"RSI {rsi} — oversold territory")
-    elif rsi > 70:
-        reasons.append(f"RSI {rsi} — overbought, expect pullback")
-    elif rsi > 55:
-        reasons.append(f"RSI {rsi} — overbought pressure")
-    reasons.append("MACD momentum is " + ("bullish ↑" if macd_hist > 0 else "bearish ↓"))
-    reasons.append("Price is " + ("above" if price > ma50 else "below") + " MA50")
-    reason_text = "\n".join(f"  • {r}" for r in reasons)
     dp = 2 if "XAU" in symbol else 4
     now = datetime.now(TIMEZONE).strftime("%H:%M WAT")
-    return (
-        f"{emoji} *{symbol}* — {signal_line}\n"
-        f"Price: `{price:.{dp}f}`\n\n"
-        f"Why:\n{reason_text}\n\n"
-        f"⚠️ _Study this signal — not financial advice._\n"
-        f"🕐 _{now}_"
+    reason = plain_english_reason(symbol, direction, rsi, macd_hist, price, ma50)
+
+    if direction == "BUY":
+        action_line = f"🟢 *BUY* ({strength})"
+    elif direction == "SELL":
+        action_line = f"🔴 *SELL* ({strength})"
+    else:
+        action_line = f"⚪ *WAIT*"
+
+    sl_line = calc_stop_loss(symbol, direction, price) if direction in ("BUY", "SELL") else ""
+
+    msg = (
+        f"{emoji} *{symbol}*\n"
+        f"{action_line}\n"
+        f"_{reason}_\n\n"
+        f"Price: `{price:.{dp}f}`\n"
     )
+
+    if sl_line:
+        msg += f"{sl_line}\n"
+
+    msg += f"\n⚠️ _Practice this on your Exness demo first._\n🕐 _{now}_"
+
+    if alert:
+        msg = f"🚨 *SIGNAL ALERT*\n\n" + msg
+
+    return msg
 
 
 def format_briefing(results):
     now = datetime.now(TIMEZONE).strftime("%A, %d %b %Y · %H:%M WAT")
-    lines = [f"📋 *Daily Forex Briefing*\n_{now}_\n"]
+    lines = [f"📋 *Good morning! Here's your forex briefing*\n_{now}_\n"]
+
     for r in results:
         sym = r["symbol"]
         emoji = PAIR_EMOJI.get(sym, "📊")
         direction, strength = interpret_signal(r["score"])
         dp = 2 if "XAU" in sym else 4
+        reason = plain_english_reason(sym, direction, r["rsi"], r["macd_hist"], r["price"], r["ma50"])
+
         if direction == "BUY":
-            mood = f"🟢 Leaning BUY ({strength})"
+            action = f"🟢 BUY ({strength})"
         elif direction == "SELL":
-            mood = f"🔴 Leaning SELL ({strength})"
+            action = f"🔴 SELL ({strength})"
         else:
-            mood = "⚪ Neutral — wait"
-        lines.append(f"{emoji} *{sym}*\n  Price: `{r['price']:.{dp}f}` | RSI: `{r['rsi']}`\n  {mood}\n")
-    lines.append("_Use /signal to check any pair now_")
+            action = "⚪ WAIT"
+
+        lines.append(
+            f"{emoji} *{sym}* — {action}\n"
+            f"Price: `{r['price']:.{dp}f}`\n"
+            f"_{reason}_\n"
+        )
+
+    lines.append("_Use /signal anytime to get a fresh update_")
     return "\n".join(lines)
 
 
 def format_eod(results):
     now = datetime.now(TIMEZONE).strftime("%A, %d %b %Y")
-    lines = [f"🌙 *End of Day Recap — {now}*\n"]
-    buys = [r for r in results if interpret_signal(r["score"])[0] == "BUY"]
-    sells = [r for r in results if interpret_signal(r["score"])[0] == "SELL"]
-    neutrals = [r for r in results if interpret_signal(r["score"])[0] == "NEUTRAL"]
-    if buys:
-        lines.append("🟢 *Bullish:* " + ", ".join(r["symbol"] for r in buys))
-    if sells:
-        lines.append("🔴 *Bearish:* " + ", ".join(r["symbol"] for r in sells))
-    if neutrals:
-        lines.append("⚪ *Neutral:* " + ", ".join(r["symbol"] for r in neutrals))
-    lines.append("\n_Compare these against your Exness demo trades today. That's how you learn._ 📚")
+    lines = [f"🌙 *End of Day — {now}*\n"]
+    lines.append("Here's how the market closed today:\n")
+
+    for r in results:
+        sym = r["symbol"]
+        emoji = PAIR_EMOJI.get(sym, "📊")
+        direction, strength = interpret_signal(r["score"])
+        dp = 2 if "XAU" in sym else 4
+
+        if direction == "BUY":
+            action = "🟢 Closed bullish"
+        elif direction == "SELL":
+            action = "🔴 Closed bearish"
+        else:
+            action = "⚪ Closed neutral"
+
+        lines.append(f"{emoji} *{sym}* — {action} at `{r['price']:.{dp}f}`")
+
+    lines.append("\n_Review your Exness demo trades and see how they matched these signals. That's how you get better._ 📚")
     return "\n".join(lines)
 
 
@@ -194,6 +290,8 @@ def analyse_pair(symbol):
     if not candles or len(candles) < 30:
         return None
     closes = [c["close"] for c in candles]
+    highs = [c["high"] for c in candles]
+    lows = [c["low"] for c in candles]
     price = closes[-1]
     rsi = calc_rsi(closes)
     macd = calc_macd(closes)
@@ -206,6 +304,8 @@ def analyse_pair(symbol):
         "macd_hist": macd["hist"],
         "ma50": ma50,
         "score": score,
+        "recent_high": max(highs[-20:]),
+        "recent_low": min(lows[-20:]),
     }
 
 
@@ -226,20 +326,20 @@ async def send_eod_recap(bot):
 
 
 async def check_alerts(bot):
-    logger.info("Checking for strong signals...")
+    logger.info("Checking for signals...")
     for pair in PAIRS:
         r = analyse_pair(pair)
         if not r:
             continue
         direction, strength = interpret_signal(r["score"])
-        if strength == "strong" and direction != "NEUTRAL":
+        if direction in ("BUY", "SELL") and strength == "strong":
             msg = format_signal_message(
                 r["symbol"], r["price"], r["rsi"],
-                r["macd_hist"], r["ma50"], r["score"]
+                r["macd_hist"], r["ma50"], r["score"],
+                alert=True
             )
-            if msg:
-                await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
-                logger.info(f"Alert sent for {pair}: {direction}")
+            await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+            logger.info(f"Alert sent for {pair}: {direction}")
 
 
 # ── Commands ───────────────────────────────────────────────────────────────────
@@ -248,42 +348,35 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = update.effective_user.first_name or "trader"
     await update.message.reply_text(
         f"👋 Hey {name}! I'm *D!sForex* — your personal forex signal guide.\n\n"
-        f"I watch *EUR/USD, GBP/USD, XAU/USD* and alert you when signals look strong.\n\n"
+        f"I watch *EUR/USD, GBP/USD and XAU/USD (Gold)* and tell you simply:\n"
+        f"🟢 *BUY* — good time to buy\n"
+        f"🔴 *SELL* — good time to sell\n"
+        f"⚪ *WAIT* — no clear opportunity right now\n\n"
         f"Commands:\n"
-        f"  /signal — check all pairs now\n"
-        f"  /briefing — today's market briefing\n"
-        f"  /help — how I work",
+        f"  /signal — check all pairs right now\n"
+        f"  /briefing — morning market summary\n"
+        f"  /help — how I work\n\n"
+        f"_Always practice on your Exness demo before using real money!_",
         parse_mode="Markdown"
     )
 
 
 async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔍 Fetching live signals...")
+    await update.message.reply_text("🔍 Checking the markets for you...")
     for pair in PAIRS:
         r = analyse_pair(pair)
         if not r:
-            await update.message.reply_text(f"❌ Could not fetch {pair} right now.")
+            await update.message.reply_text(f"❌ Could not fetch {pair} right now. Try again shortly.")
             continue
-        direction, strength = interpret_signal(r["score"])
-        if direction == "NEUTRAL":
-            dp = 2 if "XAU" in pair else 4
-            emoji = PAIR_EMOJI.get(pair, "📊")
-            await update.message.reply_text(
-                f"{emoji} *{pair}* — ⚪ No clear signal\n"
-                f"Price: `{r['price']:.{dp}f}` | RSI: `{r['rsi']}`\n"
-                f"_Mixed signals — wait for confluence._",
-                parse_mode="Markdown"
-            )
-        else:
-            msg = format_signal_message(
-                r["symbol"], r["price"], r["rsi"],
-                r["macd_hist"], r["ma50"], r["score"]
-            )
-            await update.message.reply_text(msg, parse_mode="Markdown")
+        msg = format_signal_message(
+            r["symbol"], r["price"], r["rsi"],
+            r["macd_hist"], r["ma50"], r["score"]
+        )
+        await update.message.reply_text(msg, parse_mode="Markdown")
 
 
 async def cmd_briefing(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📊 Pulling market data...")
+    await update.message.reply_text("📊 Pulling today's market picture...")
     results = [r for r in (analyse_pair(p) for p in PAIRS) if r]
     if results:
         await update.message.reply_text(format_briefing(results), parse_mode="Markdown")
@@ -294,12 +387,17 @@ async def cmd_briefing(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📚 *How D!sForex works*\n\n"
-        "I use 3 indicators:\n"
-        "  • *RSI* — Is price overbought or oversold?\n"
-        "  • *MACD* — Is momentum going up or down?\n"
-        "  • *MA50* — What is the overall trend?\n\n"
-        "A *strong signal* fires only when all 3 agree.\n\n"
-        "⚠️ _I guide your study — I do not trade for you._",
+        "I watch 3 things about each currency pair:\n\n"
+        "1️⃣ *Is it cheap or expensive right now?*\n"
+        "_If something has dropped a lot, it's often due a bounce back up._\n\n"
+        "2️⃣ *Is the momentum going up or down?*\n"
+        "_Like checking if a ball is still falling or starting to rise._\n\n"
+        "3️⃣ *What is the overall trend?*\n"
+        "_Is the price generally moving up or down over time?_\n\n"
+        "When all 3 agree → I tell you BUY or SELL.\n"
+        "When they disagree → I tell you WAIT.\n\n"
+        "I also give you a suggested stop loss to limit your risk.\n\n"
+        "⚠️ _Always practice on Exness demo first. Never risk money you can't afford to lose._",
         parse_mode="Markdown"
     )
 
@@ -318,11 +416,10 @@ def main():
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
     scheduler.add_job(send_morning_briefing, "cron", hour=7, minute=0, args=[bot])
     scheduler.add_job(send_eod_recap, "cron", hour=21, minute=0, args=[bot])
-    # Check for strong signals every 15 minutes during market hours
     scheduler.add_job(check_alerts, "cron", hour="6-22", minute="*/15", args=[bot])
     scheduler.start()
 
-    logger.info("D!sForex bot is running on Railway...")
+    logger.info("D!sForex bot is running...")
     app.run_polling(drop_pending_updates=True)
 
 
