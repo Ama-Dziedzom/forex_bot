@@ -12,9 +12,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # ── PASTE YOUR CREDENTIALS DIRECTLY HERE ──────────────────────────────────────
-TELEGRAM_TOKEN = "8716627952:AAEJbaMTA7oi8OC6CXxduZK5IAbXbAMTRAw"
-TWELVEDATA_API_KEY = "8b6776bf8717425da1a199f096baf6ec"
-CHAT_ID = "6083157713"
+TELEGRAM_TOKEN = "PASTE_YOUR_BOT_TOKEN_HERE"
+TWELVEDATA_API_KEY = "PASTE_YOUR_TWELVEDATA_KEY_HERE"
+CHAT_ID = "PASTE_YOUR_CHAT_ID_HERE"
 # ──────────────────────────────────────────────────────────────────────────────
 
 PAIRS = ["EUR/USD", "GBP/USD", "XAU/USD"]
