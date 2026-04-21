@@ -4,16 +4,20 @@ import logging
 from datetime import datetime
 import pytz
 import requests
+from dotenv import load_dotenv
 from telegram import Bot, Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+# Load environment variables from .env
+load_dotenv()
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "YOUR_TELEGRAM_TOKEN")
-TWELVEDATA_API_KEY = os.environ.get("TWELVEDATA_API_KEY", "YOUR_API_KEY")
-CHAT_ID = os.environ.get("CHAT_ID", "YOUR_CHAT_ID")
+TELEGRAM_TOKEN = os.environ.get("8716627952:AAEJbaMTA7oi8OC6CXxduZK5IAbXbAMTRAw")
+TWELVEDATA_API_KEY = os.environ.get("8b6776bf8717425da1a199f096baf6ec")
+CHAT_ID = os.environ.get("6083157713")
 
 PAIRS = ["EUR/USD", "GBP/USD", "XAU/USD"]
 TIMEZONE = pytz.timezone("Africa/Accra")
