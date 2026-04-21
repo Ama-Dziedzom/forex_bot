@@ -1,0 +1,13 @@
+services:
+  - type: worker
+    name: forex-signal-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: TELEGRAM_TOKEN
+        sync: false
+      - key: TWELVEDATA_API_KEY
+        sync: false
+      - key: CHAT_ID
+        sync: false
