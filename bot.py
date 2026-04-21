@@ -400,7 +400,15 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "⚠️ _Always practice on Exness demo first. Never risk money you can't afford to lose._",
         parse_mode="Markdown"
     )
-
+    
+async def send_auto_signal(bot):
+    results = [r for r in (analyse_pair(p) for p in PAIRS) if r]
+    for r in results:
+        msg = format_signal_message(
+            r["symbol"], r["price"], r["rsi"],
+            r["macd_hist"], r["ma50"], r["score"]
+        )
+        await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
@@ -417,6 +425,7 @@ def main():
     scheduler.add_job(send_morning_briefing, "cron", hour=7, minute=0, args=[bot])
     scheduler.add_job(send_eod_recap, "cron", hour=21, minute=0, args=[bot])
     scheduler.add_job(check_alerts, "cron", hour="6-22", minute="*/15", args=[bot])
+    scheduler.add_job(send_auto_signal, "cron", hour="6-22", minute="*/15", args=[bot])
     scheduler.start()
 
     logger.info("D!sForex bot is running...")
