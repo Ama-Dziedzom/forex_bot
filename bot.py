@@ -4,18 +4,16 @@ import logging
 from datetime import datetime
 import pytz
 import requests
-from telegram import Bot, Update
+from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# ── PASTE YOUR CREDENTIALS DIRECTLY HERE ──────────────────────────────────────
-TELEGRAM_TOKEN = "PASTE_YOUR_BOT_TOKEN_HERE"
-TWELVEDATA_API_KEY = "PASTE_YOUR_TWELVEDATA_KEY_HERE"
-CHAT_ID = "PASTE_YOUR_CHAT_ID_HERE"
-# ──────────────────────────────────────────────────────────────────────────────
+TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
+TWELVEDATA_API_KEY = os.environ["TWELVEDATA_API_KEY"]
+CHAT_ID = os.environ["CHAT_ID"]
 
 PAIRS = ["EUR/USD", "GBP/USD", "XAU/USD"]
 TIMEZONE = pytz.timezone("Africa/Accra")
@@ -141,7 +139,7 @@ def format_signal_message(symbol, price, rsi, macd_hist, ma50, score):
     elif rsi > 55:
         reasons.append(f"RSI {rsi} — overbought pressure")
     reasons.append("MACD momentum is " + ("bullish ↑" if macd_hist > 0 else "bearish ↓"))
-    reasons.append("Price is " + ("above" if price > ma50 else "below") + f" MA50")
+    reasons.append("Price is " + ("above" if price > ma50 else "below") + " MA50")
     reason_text = "\n".join(f"  • {r}" for r in reasons)
     dp = 2 if "XAU" in symbol else 4
     now = datetime.now(TIMEZONE).strftime("%H:%M WAT")
@@ -201,38 +199,52 @@ def analyse_pair(symbol):
     macd = calc_macd(closes)
     ma50 = calc_ma(closes, min(50, len(closes)))
     score = get_signal_score(rsi, macd["hist"], price, ma50)
-    return {"symbol": symbol, "price": price, "rsi": rsi, "macd_hist": macd["hist"], "ma50": ma50, "score": score}
+    return {
+        "symbol": symbol,
+        "price": price,
+        "rsi": rsi,
+        "macd_hist": macd["hist"],
+        "ma50": ma50,
+        "score": score,
+    }
 
 
 # ── Scheduled jobs ─────────────────────────────────────────────────────────────
 
 async def send_morning_briefing(bot):
+    logger.info("Sending morning briefing...")
     results = [r for r in (analyse_pair(p) for p in PAIRS) if r]
     if results:
         await bot.send_message(chat_id=CHAT_ID, text=format_briefing(results), parse_mode="Markdown")
 
 
 async def send_eod_recap(bot):
+    logger.info("Sending EOD recap...")
     results = [r for r in (analyse_pair(p) for p in PAIRS) if r]
     if results:
         await bot.send_message(chat_id=CHAT_ID, text=format_eod(results), parse_mode="Markdown")
 
 
 async def check_alerts(bot):
+    logger.info("Checking for strong signals...")
     for pair in PAIRS:
         r = analyse_pair(pair)
         if not r:
             continue
         direction, strength = interpret_signal(r["score"])
         if strength == "strong" and direction != "NEUTRAL":
-            msg = format_signal_message(r["symbol"], r["price"], r["rsi"], r["macd_hist"], r["ma50"], r["score"])
+            msg = format_signal_message(
+                r["symbol"], r["price"], r["rsi"],
+                r["macd_hist"], r["ma50"], r["score"]
+            )
             if msg:
                 await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+                logger.info(f"Alert sent for {pair}: {direction}")
 
 
 # ── Commands ───────────────────────────────────────────────────────────────────
 
-async def cmd_start(update, context):
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = update.effective_user.first_name or "trader"
     await update.message.reply_text(
         f"👋 Hey {name}! I'm *D!sForex* — your personal forex signal guide.\n\n"
@@ -245,7 +257,7 @@ async def cmd_start(update, context):
     )
 
 
-async def cmd_signal(update, context):
+async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔍 Fetching live signals...")
     for pair in PAIRS:
         r = analyse_pair(pair)
@@ -263,11 +275,14 @@ async def cmd_signal(update, context):
                 parse_mode="Markdown"
             )
         else:
-            msg = format_signal_message(r["symbol"], r["price"], r["rsi"], r["macd_hist"], r["ma50"], r["score"])
+            msg = format_signal_message(
+                r["symbol"], r["price"], r["rsi"],
+                r["macd_hist"], r["ma50"], r["score"]
+            )
             await update.message.reply_text(msg, parse_mode="Markdown")
 
 
-async def cmd_briefing(update, context):
+async def cmd_briefing(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📊 Pulling market data...")
     results = [r for r in (analyse_pair(p) for p in PAIRS) if r]
     if results:
@@ -276,7 +291,7 @@ async def cmd_briefing(update, context):
         await update.message.reply_text("❌ Could not fetch data right now. Try again shortly.")
 
 
-async def cmd_help(update, context):
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📚 *How D!sForex works*\n\n"
         "I use 3 indicators:\n"
@@ -303,10 +318,11 @@ def main():
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
     scheduler.add_job(send_morning_briefing, "cron", hour=7, minute=0, args=[bot])
     scheduler.add_job(send_eod_recap, "cron", hour=21, minute=0, args=[bot])
-    scheduler.add_job(check_alerts, "cron", hour="7-22", minute=0, args=[bot])
+    # Check for strong signals every 15 minutes during market hours
+    scheduler.add_job(check_alerts, "cron", hour="6-22", minute="*/15", args=[bot])
     scheduler.start()
 
-    logger.info("D!sForex bot is running...")
+    logger.info("D!sForex bot is running on Railway...")
     app.run_polling(drop_pending_updates=True)
 
 

@@ -1,124 +1,59 @@
-# Forex Signal Guide Bot — Setup Instructions
+# D!sForex — Railway Deployment
 
-A Telegram bot that watches EUR/USD, GBP/USD, and XAU/USD and sends
-you signal alerts based on RSI, MACD, and MA50 indicators.
+Forex signal guide bot for Telegram. Watches EUR/USD, GBP/USD, XAU/USD
+and sends alerts every 15 minutes during market hours.
 
----
+## Files
+- `bot.py` — main bot (NO credentials inside — safe to push to GitHub)
+- `requirements.txt` — dependencies
+- `Procfile` — tells Railway how to run the bot
+- `.gitignore` — prevents secrets from being pushed to GitHub
 
-## Step 1 — Get your Telegram Bot Token (2 mins)
+## Deploy to Railway
 
-1. Open Telegram and search for **@BotFather**
-2. Send `/newbot`
-3. Give it a name e.g. `Ama Forex Guide`
-4. Give it a username e.g. `ama_forex_bot`
-5. BotFather will give you a token like:
-   `7123456789:AAFxxxxxxxxxxxxxxxxxxxxxx`
-6. Save that — it's your `TELEGRAM_TOKEN`
+### Step 1 — Push to GitHub
+Make sure these files are in your repo.
+Your bot.py has NO hardcoded credentials — safe to push.
 
----
+### Step 2 — Create Railway project
+1. Go to https://railway.app
+2. Sign up with GitHub (free)
+3. Click **New Project → Deploy from GitHub repo**
+4. Select your forex_bot repo
+5. Railway auto-detects the Procfile
 
-## Step 2 — Get your Chat ID (2 mins)
+### Step 3 — Add environment variables
+In Railway dashboard → your project → **Variables** tab, add:
 
-1. Start your new bot by searching for it in Telegram and clicking Start
-2. Go to this URL in your browser (replace YOUR_TOKEN):
-   `https://api.telegram.org/botYOUR_TOKEN/getUpdates`
-3. Send any message to your bot first, then refresh the URL
-4. Find `"chat":{"id":XXXXXXXXX}` — that number is your `CHAT_ID`
-
----
-
-## Step 3 — Get your Twelve Data API key (2 mins)
-
-1. Go to https://twelvedata.com
-2. Sign up for a free account
-3. Go to your dashboard → API Keys
-4. Copy your key — it's your `TWELVEDATA_API_KEY`
-
-Free tier gives you 800 API calls/day — more than enough.
-
----
-
-## Step 4 — Deploy on Render (free, 5 mins)
-
-1. Push your code to a GitHub repo (bot.py, requirements.txt, render.yaml)
-2. Go to https://render.com and sign up free
-3. Click **New → Blueprint** and connect your GitHub repo
-4. Render will detect render.yaml automatically
-5. Add your 3 environment variables:
-   - `TELEGRAM_TOKEN`
-   - `TWELVEDATA_API_KEY`
-   - `CHAT_ID`
-6. Click Deploy — your bot is live!
-
----
-
-## What the bot sends you
-
-### Morning briefing (7am WAT daily)
-```
-📋 Daily Forex Briefing
-Monday, 21 Apr 2026 · 07:00 WAT
-
-🇪🇺 EUR/USD
-  Price: 1.0845 | RSI: 38.2
-  🟢 Leaning BUY (moderate)
-
-🇬🇧 GBP/USD
-  Price: 1.2640 | RSI: 61.5
-  ⚪ Neutral — wait
-
-🥇 XAU/USD
-  Price: 2341.20 | RSI: 72.1
-  🔴 Leaning SELL (moderate)
-```
-
-### Strong signal alert (when it fires)
-```
-🥇 XAU/USD — 🔴 STRONG SELL SIGNAL
-Price: 2341.20
-
-Why:
-  • RSI 74.3 — overbought, expect pullback
-  • MACD momentum is bearish ↓
-  • Price is below MA50 (2338.10)
-
-⚠️ Study this signal, not financial advice.
-```
-
-### EOD recap (9pm WAT daily)
-Summary of how each pair ended the day.
-
----
-
-## Bot Commands
-
-| Command | What it does |
+| Variable | Value |
 |---|---|
-| `/start` | Introduction |
-| `/signal` | Check all 3 pairs right now |
-| `/signal XAUUSD` | Check one pair |
-| `/briefing` | Get today's briefing on demand |
-| `/help` | How the bot works |
+| TELEGRAM_TOKEN | your token from @BotFather |
+| TWELVEDATA_API_KEY | your key from twelvedata.com |
+| CHAT_ID | your Telegram chat ID |
 
----
+### Step 4 — Deploy
+Click Deploy. Railway will install requirements and start the bot.
+Check the logs — you should see:
+```
+D!sForex bot is running on Railway...
+```
 
-## How signals work
+## What the bot does
 
-A **strong signal** fires only when all 3 indicators agree:
+| Time | Action |
+|---|---|
+| 7:00 WAT daily | Morning briefing sent |
+| Every 15 mins (6am-10pm) | Checks for strong signals |
+| 9:00 WAT daily | End of day recap |
 
-| Indicator | Buy condition | Sell condition |
-|---|---|---|
-| RSI | Below 35 | Above 65 |
-| MACD histogram | Positive | Negative |
-| MA50 trend | Price above MA | Price below MA |
+## Commands
+- `/start` — introduction
+- `/signal` — check all pairs now
+- `/briefing` — today's briefing on demand
+- `/help` — how indicators work
 
-Score of +3 = strong buy alert sent
-Score of -3 = strong sell alert sent
-Mixed = no alert (wait for confluence)
-
----
-
-## Disclaimer
-This bot is for educational purposes. It helps you study market signals
-and understand technical analysis. It does not execute trades. Always
-practice on a demo account (like your Exness demo) before trading real money.
+## Security rules
+- NEVER hardcode credentials in bot.py
+- NEVER commit .env files to GitHub
+- All secrets go in Railway environment variables ONLY
+- If token is exposed → revoke immediately via @BotFather
