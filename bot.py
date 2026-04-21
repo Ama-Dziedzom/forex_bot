@@ -424,8 +424,8 @@ def main():
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
     scheduler.add_job(send_morning_briefing, "cron", hour=7, minute=0, args=[bot])
     scheduler.add_job(send_eod_recap, "cron", hour=21, minute=0, args=[bot])
-    scheduler.add_job(check_alerts, "cron", hour="6-22", minute="*/15", args=[bot])
-    scheduler.add_job(send_auto_signal, "cron", hour="6-22", minute="*/15", args=[bot])
+    scheduler.add_job(check_alerts, "cron", hour="6-23", minute="*/15", args=[bot])
+    scheduler.add_job(send_auto_signal, "cron", hour="6-23", minute="*/15", args=[bot])
     scheduler.start()
 
     logger.info("D!sForex bot is running...")
