@@ -329,6 +329,7 @@ async def check_alerts(bot):
     logger.info("Checking for signals...")
     for pair in PAIRS:
         r = analyse_pair(pair)
+        await asyncio.sleep(20)  
         if not r:
             continue
         direction, strength = interpret_signal(r["score"])
@@ -340,7 +341,6 @@ async def check_alerts(bot):
             )
             await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
             logger.info(f"Alert sent for {pair}: {direction}")
-
 
 # ── Commands ───────────────────────────────────────────────────────────────────
 
@@ -402,8 +402,11 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
 async def send_auto_signal(bot):
-    results = [r for r in (analyse_pair(p) for p in PAIRS) if r]
-    for r in results:
+    for p in PAIRS:
+        r = analyse_pair(p)
+        await asyncio.sleep(20)  
+        if not r:
+            continue
         msg = format_signal_message(
             r["symbol"], r["price"], r["rsi"],
             r["macd_hist"], r["ma50"], r["score"]
