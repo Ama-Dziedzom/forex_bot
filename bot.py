@@ -132,7 +132,7 @@ def analyse_pair(symbol):
     if not tf1h:
         return None
 
-    tf15m = analyse_timeframe(symbol, "15min", 40)
+    tf15m = analyse_timeframe(symbol, "15min", 30)
     if not tf15m:
         # Fall back to 1h only if 15min fetch fails
         return {
