@@ -18,53 +18,27 @@ CHAT_ID = os.environ["CHAT_ID"]
 PAIRS = ["EUR/USD", "GBP/USD", "XAU/USD"]
 TIMEZONE = pytz.timezone("Africa/Accra")
 
-PAIR_EMOJI = {
-    "EUR/USD": "🇪🇺",
-    "GBP/USD": "🇬🇧",
-    "XAU/USD": "🥇",
-}
-
-PAIR_LABEL = {
-    "EUR/USD": "Euro",
-    "GBP/USD": "British Pound",
-    "XAU/USD": "Gold",
-}
-
-# Stop loss pip/point distance per pair
-STOP_LOSS_DISTANCE = {
-    "EUR/USD": 0.0015,
-    "GBP/USD": 0.0020,
-    "XAU/USD": 8.0,
-}
+PAIR_EMOJI = {"EUR/USD": "🇪🇺", "GBP/USD": "🇬🇧", "XAU/USD": "🥇"}
+PAIR_LABEL = {"EUR/USD": "Euro", "GBP/USD": "British Pound", "XAU/USD": "Gold"}
+STOP_LOSS_DISTANCE = {"EUR/USD": 0.0015, "GBP/USD": 0.0020, "XAU/USD": 8.0}
 
 
 # ── Data fetching ──────────────────────────────────────────────────────────────
 
 def fetch_candles(symbol, interval="1h", outputsize=60):
-    url = "https://api.twelvedata.com/time_series"
-    params = {
-        "symbol": symbol,
-        "interval": interval,
-        "outputsize": outputsize,
-        "apikey": TWELVEDATA_API_KEY,
-    }
     try:
-        resp = requests.get(url, params=params, timeout=10)
+        resp = requests.get(
+            "https://api.twelvedata.com/time_series",
+            params={"symbol": symbol, "interval": interval, "outputsize": outputsize, "apikey": TWELVEDATA_API_KEY},
+            timeout=10,
+        )
         data = resp.json()
         if data.get("status") == "error":
-            logger.error(f"API error for {symbol}: {data.get('message')}")
+            logger.error(f"API error {symbol} {interval}: {data.get('message')}")
             return None
-        values = data.get("values", [])
-        return [
-            {
-                "close": float(v["close"]),
-                "high": float(v["high"]),
-                "low": float(v["low"]),
-            }
-            for v in reversed(values)
-        ]
+        return [{"close": float(v["close"]), "high": float(v["high"]), "low": float(v["low"])} for v in reversed(data.get("values", []))]
     except Exception as e:
-        logger.error(f"Failed to fetch {symbol}: {e}")
+        logger.error(f"Fetch error {symbol} {interval}: {e}")
         return None
 
 
@@ -78,12 +52,11 @@ def calc_rsi(closes, period=14):
         d = closes[i] - closes[i - 1]
         gains.append(max(d, 0))
         losses.append(max(-d, 0))
-    avg_gain = sum(gains[-period:]) / period
-    avg_loss = sum(losses[-period:]) / period
-    if avg_loss == 0:
+    ag = sum(gains[-period:]) / period
+    al = sum(losses[-period:]) / period
+    if al == 0:
         return 100.0
-    rs = avg_gain / avg_loss
-    return round(100 - 100 / (1 + rs), 2)
+    return round(100 - 100 / (1 + ag / al), 2)
 
 
 def calc_ema(closes, period):
@@ -91,256 +64,272 @@ def calc_ema(closes, period):
         return closes[-1]
     k = 2 / (period + 1)
     ema = sum(closes[:period]) / period
-    for price in closes[period:]:
-        ema = price * k + ema * (1 - k)
+    for p in closes[period:]:
+        ema = p * k + ema * (1 - k)
     return ema
 
 
-def calc_macd(closes):
-    ema12 = calc_ema(closes, 12)
-    ema26 = calc_ema(closes, 26)
-    macd_line = ema12 - ema26
-    signal_line = macd_line * 0.85
-    histogram = macd_line - signal_line
-    return {"macd": macd_line, "signal": signal_line, "hist": histogram}
+def calc_macd_hist(closes):
+    return calc_ema(closes, 12) - calc_ema(closes, 26)
 
 
 def calc_ma(closes, period):
-    subset = closes[-period:]
-    return sum(subset) / len(subset)
+    return sum(closes[-period:]) / min(period, len(closes))
 
 
-def get_signal_score(rsi, macd_hist, price, ma50):
-    score = 0
-    # RSI — weighted more heavily
-    if rsi < 25:
-        score += 3
-    elif rsi < 35:
-        score += 2
-    elif rsi < 45:
-        score += 1
-    elif rsi > 75:
-        score -= 3
-    elif rsi > 65:
-        score -= 2
-    elif rsi > 55:
-        score -= 1
-    # MACD momentum
-    score += 1 if macd_hist > 0 else -1
-    # Trend
-    score += 1 if price > ma50 else -1
-    return score
+def get_score(rsi, macd_hist, price, ma50):
+    s = 0
+    if rsi < 25: s += 3
+    elif rsi < 35: s += 2
+    elif rsi < 45: s += 1
+    elif rsi > 75: s -= 3
+    elif rsi > 65: s -= 2
+    elif rsi > 55: s -= 1
+    s += 1 if macd_hist > 0 else -1
+    s += 1 if price > ma50 else -1
+    return s
 
 
-def interpret_signal(score):
-    if score >= 3:
-        return "BUY", "strong"
-    elif score >= 1:
-        return "BUY", "moderate"
-    elif score <= -3:
-        return "SELL", "strong"
-    elif score <= -1:
-        return "SELL", "moderate"
+def get_direction(score):
+    if score >= 2: return "BUY"
+    if score <= -2: return "SELL"
+    return "WAIT"
+
+
+# ── Multi-timeframe analysis ───────────────────────────────────────────────────
+
+def analyse_timeframe(symbol, interval, outputsize=60):
+    """Analyse a single timeframe and return direction + score."""
+    candles = fetch_candles(symbol, interval, outputsize)
+    if not candles or len(candles) < 30:
+        return None
+    closes = [c["close"] for c in candles]
+    price = closes[-1]
+    rsi = calc_rsi(closes)
+    macd_hist = calc_macd_hist(closes)
+    ma50 = calc_ma(closes, min(50, len(closes)))
+    score = get_score(rsi, macd_hist, price, ma50)
+    return {
+        "price": price,
+        "rsi": rsi,
+        "macd_hist": macd_hist,
+        "ma50": ma50,
+        "score": score,
+        "direction": get_direction(score),
+    }
+
+
+def analyse_pair(symbol):
+    """
+    Multi-timeframe analysis:
+    - 1h = overall trend
+    - 15min = current momentum confirmation
+
+    Signal only fires when BOTH timeframes agree.
+    If they conflict → WAIT (reversal may be forming)
+    """
+    tf1h = analyse_timeframe(symbol, "1h", 60)
+    if not tf1h:
+        return None
+
+    tf15m = analyse_timeframe(symbol, "15min", 40)
+    if not tf15m:
+        # Fall back to 1h only if 15min fetch fails
+        return {
+            "symbol": symbol,
+            "price": tf1h["price"],
+            "rsi": tf1h["rsi"],
+            "macd_hist": tf1h["macd_hist"],
+            "ma50": tf1h["ma50"],
+            "score": tf1h["score"],
+            "direction": tf1h["direction"],
+            "confirmed": False,
+            "tf1h_dir": tf1h["direction"],
+            "tf15m_dir": "unknown",
+        }
+
+    dir_1h = tf1h["direction"]
+    dir_15m = tf15m["direction"]
+
+    # Both timeframes agree → confirmed signal
+    if dir_1h == dir_15m and dir_1h != "WAIT":
+        final_direction = dir_1h
+        confirmed = True
+    # They conflict → WAIT, reversal may be forming
+    elif dir_1h != dir_15m:
+        final_direction = "WAIT"
+        confirmed = False
     else:
-        return "WAIT", "neutral"
+        final_direction = "WAIT"
+        confirmed = False
+
+    return {
+        "symbol": symbol,
+        "price": tf1h["price"],
+        "rsi": tf1h["rsi"],
+        "macd_hist": tf1h["macd_hist"],
+        "ma50": tf1h["ma50"],
+        "score": tf1h["score"],
+        "direction": final_direction,
+        "confirmed": confirmed,
+        "tf1h_dir": dir_1h,
+        "tf15m_dir": dir_15m,
+    }
 
 
 # ── Plain English reasons ──────────────────────────────────────────────────────
 
-def plain_english_reason(symbol, direction, rsi, macd_hist, price, ma50):
+def plain_reason(symbol, direction, rsi, macd_hist, price, ma50, confirmed, tf1h_dir, tf15m_dir):
     label = PAIR_LABEL.get(symbol, symbol)
 
+    if not confirmed and direction == "WAIT" and tf1h_dir != tf15m_dir:
+        return f"1hr trend says {tf1h_dir} but 15min momentum says {tf15m_dir} — possible reversal forming. Sit this one out."
+
     if direction == "BUY":
-        if rsi < 25:
-            return f"{label} has dropped a lot and looks very cheap right now — a bounce up is likely."
-        elif rsi < 35:
-            return f"{label} has been oversold and is showing early signs of recovery."
-        elif macd_hist > 0 and price > ma50:
-            return f"{label} momentum is picking up and the overall trend is upward."
-        else:
-            return f"More signals are pointing up than down for {label} right now."
+        if rsi < 25: return f"{label} is very cheap right now — likely to bounce up. Both timeframes confirm."
+        if rsi < 35: return f"{label} is oversold and recovering. Short and long term trend both agree."
+        return f"{label} momentum is building upward on both the hourly and 15min chart."
 
-    elif direction == "SELL":
-        if rsi > 75:
-            return f"{label} has risen too fast and looks expensive — a drop is likely."
-        elif rsi > 65:
-            return f"{label} is overbought and momentum is starting to turn downward."
-        elif macd_hist < 0 and price < ma50:
-            return f"{label} momentum is weakening and the overall trend is downward."
-        else:
-            return f"More signals are pointing down than up for {label} right now."
+    if direction == "SELL":
+        if rsi > 75: return f"{label} has risen too fast — likely to drop. Both timeframes confirm."
+        if rsi > 65: return f"{label} is overbought and turning down. Short and long term agree."
+        return f"{label} momentum is weakening on both the hourly and 15min chart."
 
-    else:
-        if rsi < 40:
-            return f"{label} looks cheap but momentum hasn't confirmed a bounce yet. Watch and wait."
-        elif rsi > 60:
-            return f"{label} looks expensive but hasn't started dropping yet. Watch and wait."
-        else:
-            return f"No strong direction for {label} right now. Sit this one out."
+    return f"No strong direction for {label} right now. Wait for a clearer setup."
 
 
-# ── Stop loss calculation ──────────────────────────────────────────────────────
+# ── Stop loss / take profit ────────────────────────────────────────────────────
 
-def calc_stop_loss(symbol, direction, price):
+def calc_sl_tp(symbol, direction, price):
     distance = STOP_LOSS_DISTANCE.get(symbol, 0.002)
     dp = 2 if "XAU" in symbol else 4
     if direction == "BUY":
-        sl = price - distance
-        tp = price + (distance * 2)
-        return f"Stop loss: `{sl:.{dp}f}` | Take profit: `{tp:.{dp}f}`"
+        return f"Stop loss: `{price - distance:.{dp}f}` | Take profit: `{price + distance * 2:.{dp}f}`"
     elif direction == "SELL":
-        sl = price + distance
-        tp = price - (distance * 2)
-        return f"Stop loss: `{sl:.{dp}f}` | Take profit: `{tp:.{dp}f}`"
+        return f"Stop loss: `{price + distance:.{dp}f}` | Take profit: `{price - distance * 2:.{dp}f}`"
     return ""
 
 
 # ── Message formatting ─────────────────────────────────────────────────────────
 
-def format_signal_message(symbol, price, rsi, macd_hist, ma50, score, alert=False):
-    direction, strength = interpret_signal(score)
+def format_signal(r, alert=False):
+    symbol = r["symbol"]
+    direction = r["direction"]
+    confirmed = r["confirmed"]
     emoji = PAIR_EMOJI.get(symbol, "📊")
     dp = 2 if "XAU" in symbol else 4
     now = datetime.now(TIMEZONE).strftime("%H:%M WAT")
-    reason = plain_english_reason(symbol, direction, rsi, macd_hist, price, ma50)
 
-    if direction == "BUY":
-        action_line = f"🟢 *BUY* ({strength})"
-    elif direction == "SELL":
-        action_line = f"🔴 *SELL* ({strength})"
-    else:
-        action_line = f"⚪ *WAIT*"
-
-    sl_line = calc_stop_loss(symbol, direction, price) if direction in ("BUY", "SELL") else ""
-
-    msg = (
-        f"{emoji} *{symbol}*\n"
-        f"{action_line}\n"
-        f"_{reason}_\n\n"
-        f"Price: `{price:.{dp}f}`\n"
+    reason = plain_reason(
+        symbol, direction, r["rsi"], r["macd_hist"],
+        r["price"], r["ma50"], confirmed,
+        r["tf1h_dir"], r["tf15m_dir"]
     )
 
+    if direction == "BUY":
+        action = "🟢 *BUY*" + (" ✅ confirmed" if confirmed else "")
+    elif direction == "SELL":
+        action = "🔴 *SELL*" + (" ✅ confirmed" if confirmed else "")
+    else:
+        action = "⚪ *WAIT*"
+
+    sl_line = calc_sl_tp(symbol, direction, r["price"]) if direction in ("BUY", "SELL") else ""
+
+    msg = f"{'🚨 *SIGNAL ALERT*' + chr(10) + chr(10) if alert else ''}"
+    msg += f"{emoji} *{symbol}*\n{action}\n_{reason}_\n\nPrice: `{r['price']:.{dp}f}`\n"
     if sl_line:
         msg += f"{sl_line}\n"
-
-    msg += f"\n⚠️ _Practice this on your Exness demo first._\n🕐 _{now}_"
-
-    if alert:
-        msg = f"🚨 *SIGNAL ALERT*\n\n" + msg
-
+    msg += f"\n🕐 _{now}_"
     return msg
 
 
 def format_briefing(results):
     now = datetime.now(TIMEZONE).strftime("%A, %d %b %Y · %H:%M WAT")
-    lines = [f"📋 *Good morning! Here's your forex briefing*\n_{now}_\n"]
-
+    lines = [f"📋 *Good morning! Forex briefing*\n_{now}_\n"]
     for r in results:
         sym = r["symbol"]
         emoji = PAIR_EMOJI.get(sym, "📊")
-        direction, strength = interpret_signal(r["score"])
+        direction = r["direction"]
+        confirmed = r["confirmed"]
         dp = 2 if "XAU" in sym else 4
-        reason = plain_english_reason(sym, direction, r["rsi"], r["macd_hist"], r["price"], r["ma50"])
 
         if direction == "BUY":
-            action = f"🟢 BUY ({strength})"
+            action = "🟢 BUY" + (" ✅" if confirmed else " (unconfirmed)")
         elif direction == "SELL":
-            action = f"🔴 SELL ({strength})"
+            action = "🔴 SELL" + (" ✅" if confirmed else " (unconfirmed)")
         else:
             action = "⚪ WAIT"
 
-        lines.append(
-            f"{emoji} *{sym}* — {action}\n"
-            f"Price: `{r['price']:.{dp}f}`\n"
-            f"_{reason}_\n"
-        )
+        tf_note = f"1hr: {r['tf1h_dir']} | 15min: {r['tf15m_dir']}"
+        lines.append(f"{emoji} *{sym}* — {action}\nPrice: `{r['price']:.{dp}f}` | _{tf_note}_\n")
 
-    lines.append("_Use /signal anytime to get a fresh update_")
+    lines.append("_Use /signal anytime for a fresh update_")
     return "\n".join(lines)
 
 
 def format_eod(results):
     now = datetime.now(TIMEZONE).strftime("%A, %d %b %Y")
     lines = [f"🌙 *End of Day — {now}*\n"]
-    lines.append("Here's how the market closed today:\n")
-
     for r in results:
         sym = r["symbol"]
         emoji = PAIR_EMOJI.get(sym, "📊")
-        direction, strength = interpret_signal(r["score"])
+        direction = r["direction"]
         dp = 2 if "XAU" in sym else 4
-
-        if direction == "BUY":
-            action = "🟢 Closed bullish"
-        elif direction == "SELL":
-            action = "🔴 Closed bearish"
-        else:
-            action = "⚪ Closed neutral"
-
+        action = "🟢 Closed bullish" if direction == "BUY" else "🔴 Closed bearish" if direction == "SELL" else "⚪ Closed neutral"
         lines.append(f"{emoji} *{sym}* — {action} at `{r['price']:.{dp}f}`")
-
-    lines.append("\n_Review your Exness demo trades and see how they matched these signals. That's how you get better._ 📚")
+    lines.append("\n_Review your Exness demo trades against these signals. That's how you improve._ 📚")
     return "\n".join(lines)
-
-
-# ── Analysis ───────────────────────────────────────────────────────────────────
-
-def analyse_pair(symbol):
-    candles = fetch_candles(symbol)
-    if not candles or len(candles) < 30:
-        return None
-    closes = [c["close"] for c in candles]
-    highs = [c["high"] for c in candles]
-    lows = [c["low"] for c in candles]
-    price = closes[-1]
-    rsi = calc_rsi(closes)
-    macd = calc_macd(closes)
-    ma50 = calc_ma(closes, min(50, len(closes)))
-    score = get_signal_score(rsi, macd["hist"], price, ma50)
-    return {
-        "symbol": symbol,
-        "price": price,
-        "rsi": rsi,
-        "macd_hist": macd["hist"],
-        "ma50": ma50,
-        "score": score,
-        "recent_high": max(highs[-20:]),
-        "recent_low": min(lows[-20:]),
-    }
 
 
 # ── Scheduled jobs ─────────────────────────────────────────────────────────────
 
 async def send_morning_briefing(bot):
     logger.info("Sending morning briefing...")
-    results = [r for r in (analyse_pair(p) for p in PAIRS) if r]
+    results = []
+    for p in PAIRS:
+        r = analyse_pair(p)
+        if r:
+            results.append(r)
+        await asyncio.sleep(20)
     if results:
         await bot.send_message(chat_id=CHAT_ID, text=format_briefing(results), parse_mode="Markdown")
 
 
 async def send_eod_recap(bot):
     logger.info("Sending EOD recap...")
-    results = [r for r in (analyse_pair(p) for p in PAIRS) if r]
+    results = []
+    for p in PAIRS:
+        r = analyse_pair(p)
+        if r:
+            results.append(r)
+        await asyncio.sleep(20)
     if results:
         await bot.send_message(chat_id=CHAT_ID, text=format_eod(results), parse_mode="Markdown")
 
 
 async def check_alerts(bot):
-    logger.info("Checking for signals...")
+    logger.info("Checking for strong signals...")
     for pair in PAIRS:
         r = analyse_pair(pair)
-        await asyncio.sleep(20)  
+        await asyncio.sleep(20)
         if not r:
             continue
-        direction, strength = interpret_signal(r["score"])
-        if direction in ("BUY", "SELL") and strength == "strong":
-            msg = format_signal_message(
-                r["symbol"], r["price"], r["rsi"],
-                r["macd_hist"], r["ma50"], r["score"],
-                alert=True
-            )
+        # Only alert on CONFIRMED strong signals (both timeframes agree)
+        if r["confirmed"] and r["direction"] in ("BUY", "SELL"):
+            msg = format_signal(r, alert=True)
             await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
-            logger.info(f"Alert sent for {pair}: {direction}")
+            logger.info(f"Confirmed alert sent for {pair}: {r['direction']}")
+
+
+async def send_auto_signal(bot):
+    for p in PAIRS:
+        r = analyse_pair(p)
+        await asyncio.sleep(20)
+        if not r:
+            continue
+        msg = format_signal(r)
+        await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+
 
 # ── Commands ───────────────────────────────────────────────────────────────────
 
@@ -348,70 +337,58 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = update.effective_user.first_name or "trader"
     await update.message.reply_text(
         f"👋 Hey {name}! I'm *D!sForex* — your personal forex signal guide.\n\n"
-        f"I watch *EUR/USD, GBP/USD and XAU/USD (Gold)* and tell you simply:\n"
-        f"🟢 *BUY* — good time to buy\n"
-        f"🔴 *SELL* — good time to sell\n"
-        f"⚪ *WAIT* — no clear opportunity right now\n\n"
+        f"I now check *two timeframes* before signalling:\n"
+        f"  📊 1-hour chart — overall trend\n"
+        f"  📊 15-min chart — current momentum\n\n"
+        f"A signal only fires when *both agree* ✅\n"
+        f"If they conflict — I tell you to WAIT ⚪\n\n"
         f"Commands:\n"
-        f"  /signal — check all pairs right now\n"
+        f"  /signal — check all pairs now\n"
         f"  /briefing — morning market summary\n"
-        f"  /help — how I work\n\n"
-        f"_Always practice on your Exness demo before using real money!_",
+        f"  /help — how I work",
         parse_mode="Markdown"
     )
 
 
 async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔍 Checking the markets for you...")
+    await update.message.reply_text("🔍 Checking both timeframes for each pair...")
     for pair in PAIRS:
         r = analyse_pair(pair)
+        await asyncio.sleep(20)
         if not r:
-            await update.message.reply_text(f"❌ Could not fetch {pair} right now. Try again shortly.")
+            await update.message.reply_text(f"❌ Could not fetch {pair} right now.")
             continue
-        msg = format_signal_message(
-            r["symbol"], r["price"], r["rsi"],
-            r["macd_hist"], r["ma50"], r["score"]
-        )
-        await update.message.reply_text(msg, parse_mode="Markdown")
+        await update.message.reply_text(format_signal(r), parse_mode="Markdown")
 
 
 async def cmd_briefing(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📊 Pulling today's market picture...")
-    results = [r for r in (analyse_pair(p) for p in PAIRS) if r]
+    await update.message.reply_text("📊 Pulling both timeframes...")
+    results = []
+    for p in PAIRS:
+        r = analyse_pair(p)
+        if r:
+            results.append(r)
+        await asyncio.sleep(20)
     if results:
         await update.message.reply_text(format_briefing(results), parse_mode="Markdown")
     else:
-        await update.message.reply_text("❌ Could not fetch data right now. Try again shortly.")
+        await update.message.reply_text("❌ Could not fetch data. Try again shortly.")
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "📚 *How D!sForex works*\n\n"
-        "I watch 3 things about each currency pair:\n\n"
-        "1️⃣ *Is it cheap or expensive right now?*\n"
-        "_If something has dropped a lot, it's often due a bounce back up._\n\n"
-        "2️⃣ *Is the momentum going up or down?*\n"
-        "_Like checking if a ball is still falling or starting to rise._\n\n"
-        "3️⃣ *What is the overall trend?*\n"
-        "_Is the price generally moving up or down over time?_\n\n"
-        "When all 3 agree → I tell you BUY or SELL.\n"
-        "When they disagree → I tell you WAIT.\n\n"
-        "I also give you a suggested stop loss to limit your risk.\n\n"
-        "⚠️ _Always practice on Exness demo first. Never risk money you can't afford to lose._",
+        "📚 *How D!sForex works — upgraded*\n\n"
+        "I now check *two timeframes* before every signal:\n\n"
+        "1️⃣ *1-hour chart* — what's the big picture trend?\n"
+        "2️⃣ *15-minute chart* — is that trend still holding RIGHT NOW?\n\n"
+        "✅ *Both say BUY* → I signal BUY\n"
+        "✅ *Both say SELL* → I signal SELL\n"
+        "⚠️ *They disagree* → I say WAIT — reversal may be forming\n\n"
+        "This is how you spotted that EUR/USD reversal manually earlier — now the bot catches it automatically.\n\n"
+        "⚠️ _Always practice on Exness demo first._",
         parse_mode="Markdown"
     )
-    
-async def send_auto_signal(bot):
-    for p in PAIRS:
-        r = analyse_pair(p)
-        await asyncio.sleep(20)  
-        if not r:
-            continue
-        msg = format_signal_message(
-            r["symbol"], r["price"], r["rsi"],
-            r["macd_hist"], r["ma50"], r["score"]
-        )
-        await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
@@ -431,7 +408,7 @@ def main():
     scheduler.add_job(send_auto_signal, "cron", hour="6-23", minute="*/15", args=[bot])
     scheduler.start()
 
-    logger.info("D!sForex bot is running...")
+    logger.info("D!sForex v2 — multi-timeframe bot is running...")
     app.run_polling(drop_pending_updates=True)
 
 
