@@ -290,7 +290,7 @@ async def send_morning_briefing(bot):
         r = analyse_pair(p)
         if r:
             results.append(r)
-        await asyncio.sleep(20)
+        await asyncio.sleep(30)
     if results:
         await bot.send_message(chat_id=CHAT_ID, text=format_briefing(results), parse_mode="Markdown")
 
@@ -302,7 +302,7 @@ async def send_eod_recap(bot):
         r = analyse_pair(p)
         if r:
             results.append(r)
-        await asyncio.sleep(20)
+        await asyncio.sleep(30)
     if results:
         await bot.send_message(chat_id=CHAT_ID, text=format_eod(results), parse_mode="Markdown")
 
@@ -311,7 +311,7 @@ async def check_alerts(bot):
     logger.info("Checking for strong signals...")
     for pair in PAIRS:
         r = analyse_pair(pair)
-        await asyncio.sleep(20)
+        await asyncio.sleep(30)
         if not r:
             continue
         # Only alert on CONFIRMED strong signals (both timeframes agree)
@@ -324,7 +324,7 @@ async def check_alerts(bot):
 async def send_auto_signal(bot):
     for p in PAIRS:
         r = analyse_pair(p)
-        await asyncio.sleep(20)
+        await asyncio.sleep(30)
         if not r:
             continue
         msg = format_signal(r)
@@ -354,7 +354,7 @@ async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔍 Checking both timeframes for each pair...")
     for pair in PAIRS:
         r = analyse_pair(pair)
-        await asyncio.sleep(20)
+        await asyncio.sleep(30)
         if not r:
             await update.message.reply_text(f"❌ Could not fetch {pair} right now.")
             continue
@@ -368,7 +368,7 @@ async def cmd_briefing(update: Update, context: ContextTypes.DEFAULT_TYPE):
         r = analyse_pair(p)
         if r:
             results.append(r)
-        await asyncio.sleep(20)
+        await asyncio.sleep(30)
     if results:
         await update.message.reply_text(format_briefing(results), parse_mode="Markdown")
     else:
@@ -404,8 +404,8 @@ def main():
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
     scheduler.add_job(send_morning_briefing, "cron", hour=7, minute=0, args=[bot])
     scheduler.add_job(send_eod_recap, "cron", hour=21, minute=0, args=[bot])
-    scheduler.add_job(check_alerts, "cron", hour="6-23", minute="*/15", args=[bot])
-    scheduler.add_job(send_auto_signal, "cron", hour="6-23", minute="*/15", args=[bot])
+    scheduler.add_job(check_alerts, "cron", hour="6-23", minute="1,16,31,46", args=[bot])
+    scheduler.add_job(send_auto_signal, "cron", hour="6-23", minute="8,23,38,53", args=[bot])
     scheduler.start()
 
     logger.info("D!sForex v2 — multi-timeframe bot is running...")
