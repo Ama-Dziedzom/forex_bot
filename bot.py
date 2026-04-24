@@ -151,18 +151,18 @@ def analyse_pair(symbol):
     dir_1h = tf1h["direction"]
     dir_15m = tf15m["direction"]
 
-    # Both timeframes agree → confirmed signal
+    
     # 1hr leads — only block if 15min is actively opposite
     if dir_1h != "WAIT":
-    if dir_15m == dir_1h or dir_15m == "WAIT":
-        final_direction = dir_1h
-        confirmed = True
+        if dir_15m == dir_1h or dir_15m == "WAIT":
+            final_direction = dir_1h
+            confirmed = True
+        else:
+            final_direction = "WAIT"
+            confirmed = False
     else:
         final_direction = "WAIT"
         confirmed = False
-    else:
-    final_direction = "WAIT"
-    confirmed = False
 
     return {
         "symbol": symbol,
