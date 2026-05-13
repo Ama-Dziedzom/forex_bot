@@ -91,8 +91,8 @@ def get_score(rsi, macd_hist, price, ma50):
 
 
 def get_direction(score):
-    if score >= 2: return "BUY"
-    if score <= -2: return "SELL"
+    if score >= 1: return "BUY"
+    if score <= -1: return "SELL"
     return "WAIT"
 
 
@@ -403,10 +403,10 @@ def main():
     app.add_handler(CommandHandler("help", cmd_help))
 
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
-    scheduler.add_job(check_alerts, "cron", day_of_week="mon-fri", hour="6-21", minute="1,16,31,46", args=[bot])
-    scheduler.add_job(send_auto_signal, "cron", day_of_week="mon-fri", hour="6-21", minute="8,23,38,53", args=[bot])
+    scheduler.add_job(check_alerts, "cron", day_of_week="mon-fri", hour="6-20", minute="1,16,31,46", args=[bot])
+    scheduler.add_job(send_auto_signal, "cron", day_of_week="mon-fri", hour="6-20", minute="8,23,38,53", args=[bot])
     scheduler.add_job(send_morning_briefing, "cron", day_of_week="mon-fri", hour=7, minute=0, args=[bot])
-    scheduler.add_job(send_eod_recap, "cron", day_of_week="mon-fri", hour=21, minute=0, args=[bot])
+    scheduler.add_job(send_eod_recap, "cron", day_of_week="mon-fri", hour=20, minute=0, args=[bot])
     scheduler.start()
 
     logger.info("D!sForex v2 — multi-timeframe bot is running...")
